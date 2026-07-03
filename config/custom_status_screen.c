@@ -37,6 +37,9 @@
  *                      Both variants populate the same layout_rows[].
  *     0x02 CELL      — one changed cell's packed 1bpp bitmap for
  *                      (row_index, col_index) in the current LAYOUT.
+ *                      bitmap_len is uint16 LE (bytes[3..4]; bitmap data
+ *                      starts at byte[5]) — widened from a single byte to
+ *                      support tiers whose packed bitmap exceeds 255 bytes.
  *     0x03 CLEAR     — blank the canvas (fill black + full invalidate).
  *   Firmware is stateless beyond canvas_buf + the current LAYOUT's row
  *   geometry/Y-offsets; it never tracks per-cell content. Out-of-range
@@ -189,7 +192,8 @@ static const cell_tier_t CELL_TIERS[TIER_COUNT] = {
 typedef struct {
     uint8_t  w, h;
     uint8_t  cols;
-    uint8_t  bytes;
+    uint16_t bytes; /* packed 1bpp bytes/cell; wire field (CELL bitmap_len)
+                      * is uint16 LE, so this must not be narrower */
     uint16_t y;
 } layout_row_t;
 
@@ -201,7 +205,7 @@ static uint8_t       layout_row_count;
  * bounds/overflow checks shared by both LAYOUT and LAYOUT_v2. Returns
  * false (and logs) if the row would not fit. */
 static bool layout_stage_row(layout_row_t *tmp, uint16_t *row, uint16_t *y,
-                              uint8_t w, uint8_t h, uint8_t cols, uint8_t bytes)
+                              uint8_t w, uint8_t h, uint8_t cols, uint16_t bytes)
 {
     if (w == 0 || w > SRC_W || h == 0) {
         LOG_WRN("cell_grid: invalid cell geometry (w=%u h=%u)", w, h);
@@ -337,16 +341,11 @@ static void handle_layout_v2(const uint8_t *p, uint16_t len)
                     i, w, h, repeat);
             return;
         }
-        uint8_t  cols       = (uint8_t)(SRC_W / w);
-        uint16_t bytes_wide = (uint16_t)(((w + 7) / 8) * h);
-        if (bytes_wide > 255) {
-            /* CELL's bitmap_len field is a single byte — this cell size is
-             * unrepresentable on the wire, not just a firmware limit. */
-            LOG_WRN("cell_grid: LAYOUT_v2 entry %u cell too large "
-                    "(w=%u h=%u -> %u bytes)", i, w, h, bytes_wide);
-            return;
-        }
-        uint8_t bytes = (uint8_t)bytes_wide;
+        uint8_t  cols  = (uint8_t)(SRC_W / w);
+        /* w<=SRC_W(68), h<=SRC_H(160) already bound this to <=1440, well
+         * within uint16_t — no separate overflow check needed now that
+         * CELL's bitmap_len wire field is 2 bytes, not 1. */
+        uint16_t bytes = (uint16_t)(((w + 7) / 8) * h);
         for (uint8_t r = 0; r < repeat; r++) {
             if (!layout_stage_row(tmp, &row, &y, w, h, cols, bytes)) {
                 return;
@@ -360,13 +359,13 @@ static void handle_layout_v2(const uint8_t *p, uint16_t len)
 
 static void handle_cell(const uint8_t *p, uint16_t len)
 {
-    if (len < 4) {
+    if (len < 5) {
         LOG_WRN("cell_grid: CELL too short (len=%u)", len);
         return;
     }
-    uint8_t row_index  = p[1];
-    uint8_t col_index  = p[2];
-    uint8_t bitmap_len = p[3];
+    uint8_t  row_index  = p[1];
+    uint8_t  col_index  = p[2];
+    uint16_t bitmap_len = (uint16_t)p[3] | ((uint16_t)p[4] << 8);
 
     if (row_index >= layout_row_count) {
         LOG_WRN("cell_grid: CELL row_index %u out of range (count=%u)",
@@ -375,8 +374,10 @@ static void handle_cell(const uint8_t *p, uint16_t len)
     }
     const layout_row_t *row = &layout_rows[row_index];
 
+    /* 32-bit arithmetic: bitmap_len is attacker/peer-controlled up to
+     * 65535, and 5 + bitmap_len would wrap a uint16_t back below len. */
     if (col_index >= row->cols || bitmap_len != row->bytes ||
-        (uint16_t)(4 + bitmap_len) > len) {
+        (uint32_t)5 + bitmap_len > (uint32_t)len) {
         LOG_WRN("cell_grid: CELL out of range (row=%u col=%u cols=%u "
                 "bitmap_len=%u expected=%u)", row_index, col_index,
                 row->cols, bitmap_len, row->bytes);
@@ -384,7 +385,7 @@ static void handle_cell(const uint8_t *p, uint16_t len)
     }
 
     uint16_t x0 = (uint16_t)col_index * row->w;
-    cell_blit(x0, row->y, row->w, row->h, p + 4);
+    cell_blit(x0, row->y, row->w, row->h, p + 5);
 }
 
 static void handle_clear(void)
