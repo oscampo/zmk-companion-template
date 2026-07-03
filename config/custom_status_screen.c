@@ -28,15 +28,20 @@
  * Characteristic 0x1527 — Write (WriteWithResponse), cell-grid protocol v1.1
  *   Kept alongside 0x1525 for A/B comparison during migration; 0x1525 is
  *   untouched. See zmk-companion docs/cell_grid_protocol.md for the full
- *   spec. Three message types, dispatched on byte 0:
- *     0x01 LAYOUT — run-length list of (tier_id, repeat) rows, ≤16 entries.
- *                   Defines the active page's row structure; rare.
- *     0x02 CELL   — one changed cell's packed 1bpp bitmap for
- *                   (row_index, col_index) in the current LAYOUT.
- *     0x03 CLEAR  — blank the canvas (fill black + full invalidate).
+ *   spec. Message types, dispatched on byte 0:
+ *     0x01 LAYOUT    — run-length list of (tier_id, repeat) rows, ≤16
+ *                      entries, tier_id resolved against CELL_TIERS[].
+ *                      Defines the active page's row structure; rare.
+ *     0x04 LAYOUT_v2 — same shape, entries carry explicit (w, h, repeat)
+ *                      instead of tier_id — no shared tier table needed.
+ *                      Both variants populate the same layout_rows[].
+ *     0x02 CELL      — one changed cell's packed 1bpp bitmap for
+ *                      (row_index, col_index) in the current LAYOUT.
+ *     0x03 CLEAR     — blank the canvas (fill black + full invalidate).
  *   Firmware is stateless beyond canvas_buf + the current LAYOUT's row
- *   tiers/Y-offsets; it never tracks per-cell content. Out-of-range LAYOUT
- *   or CELL messages are rejected (logged, ignored) rather than applied.
+ *   geometry/Y-offsets; it never tracks per-cell content. Out-of-range
+ *   LAYOUT/LAYOUT_v2/CELL messages are rejected (logged, ignored) rather
+ *   than applied.
  */
 
 #include <zephyr/kernel.h>
@@ -44,6 +49,7 @@
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/init.h>
 #include <zephyr/logging/log.h>
+#include <stdbool.h>
 #include <lvgl.h>
 #include <string.h>
 
@@ -175,10 +181,46 @@ static const cell_tier_t CELL_TIERS[TIER_COUNT] = {
     /* 6 micro        */ {  2,  2, 34,  2 },
 };
 
+/* Rows are stored as resolved geometry, not a tier index, so LAYOUT (v1,
+ * tier_id-based) and LAYOUT_v2 (explicit W/H-based) can share one table:
+ * v1 resolves tier_id -> {w,h,cols,bytes} once at parse time; v2 already
+ * has those values. CELL never needs to know which LAYOUT variant produced
+ * the row it targets. */
+typedef struct {
+    uint8_t  w, h;
+    uint8_t  cols;
+    uint8_t  bytes;
+    uint16_t y;
+} layout_row_t;
+
 #define MAX_LAYOUT_ROWS 80
-static uint8_t  layout_row_tier[MAX_LAYOUT_ROWS];
-static uint16_t layout_row_y[MAX_LAYOUT_ROWS];
-static uint8_t  layout_row_count;
+static layout_row_t layout_rows[MAX_LAYOUT_ROWS];
+static uint8_t       layout_row_count;
+
+/* Stage one physical row into tmp[*row] at cumulative Y *y, expanding
+ * bounds/overflow checks shared by both LAYOUT and LAYOUT_v2. Returns
+ * false (and logs) if the row would not fit. */
+static bool layout_stage_row(layout_row_t *tmp, uint16_t *row, uint16_t *y,
+                              uint8_t w, uint8_t h, uint8_t cols, uint8_t bytes)
+{
+    if (w == 0 || w > SRC_W || h == 0) {
+        LOG_WRN("cell_grid: invalid cell geometry (w=%u h=%u)", w, h);
+        return false;
+    }
+    if (*row >= MAX_LAYOUT_ROWS || (uint32_t)*y + h > SRC_H) {
+        LOG_WRN("cell_grid: LAYOUT exceeds %dpx or %d-row cap "
+                "(row=%u y=%u h=%u)", SRC_H, MAX_LAYOUT_ROWS, *row, *y, h);
+        return false;
+    }
+    tmp[*row].w     = w;
+    tmp[*row].h     = h;
+    tmp[*row].cols  = cols;
+    tmp[*row].bytes = bytes;
+    tmp[*row].y     = *y;
+    *y  += h;
+    (*row)++;
+    return true;
+}
 
 /* Deferred, coalesced invalidate: CELL writes land directly in canvas_buf
  * from the BT RX thread, but the actual LVGL invalidate is deferred to the
@@ -239,8 +281,7 @@ static void handle_layout(const uint8_t *p, uint16_t len)
         return;
     }
 
-    uint8_t  tmp_tier[MAX_LAYOUT_ROWS];
-    uint16_t tmp_y[MAX_LAYOUT_ROWS];
+    static layout_row_t tmp[MAX_LAYOUT_ROWS];
     uint16_t row = 0;
     uint16_t y   = 0;
 
@@ -252,21 +293,67 @@ static void handle_layout(const uint8_t *p, uint16_t len)
                     i, tier_id, repeat);
             return;
         }
+        const cell_tier_t *tier = &CELL_TIERS[tier_id];
         for (uint8_t r = 0; r < repeat; r++) {
-            if (row >= MAX_LAYOUT_ROWS || y + CELL_TIERS[tier_id].h > SRC_H) {
-                LOG_WRN("cell_grid: LAYOUT exceeds 160px or row cap "
-                        "(row=%u y=%u tier_h=%u)", row, y, CELL_TIERS[tier_id].h);
+            if (!layout_stage_row(tmp, &row, &y,
+                                   tier->w, tier->h, tier->cols, tier->bytes)) {
                 return;
             }
-            tmp_tier[row] = tier_id;
-            tmp_y[row]    = y;
-            y   += CELL_TIERS[tier_id].h;
-            row++;
         }
     }
 
-    memcpy(layout_row_tier, tmp_tier, row * sizeof(tmp_tier[0]));
-    memcpy(layout_row_y, tmp_y, row * sizeof(tmp_y[0]));
+    memcpy(layout_rows, tmp, row * sizeof(tmp[0]));
+    layout_row_count = (uint8_t)row;
+}
+
+/* LAYOUT_v2 (0x04): same wire shape as LAYOUT but entries carry explicit
+ * (w, h, repeat) instead of a tier_id — firmware no longer needs to share
+ * a hardcoded tier table with the app. LAYOUT (0x01, tier_id-based) stays
+ * supported for older app builds; both populate the same layout_rows[]. */
+static void handle_layout_v2(const uint8_t *p, uint16_t len)
+{
+    if (len < 2) {
+        LOG_WRN("cell_grid: LAYOUT_v2 too short (len=%u)", len);
+        return;
+    }
+    uint8_t entry_count = p[1];
+    if (entry_count > 16 || (uint16_t)(2 + entry_count * 3) > len) {
+        LOG_WRN("cell_grid: malformed LAYOUT_v2 (entry_count=%u len=%u)",
+                entry_count, len);
+        return;
+    }
+
+    static layout_row_t tmp[MAX_LAYOUT_ROWS];
+    uint16_t row = 0;
+    uint16_t y   = 0;
+
+    for (uint8_t i = 0; i < entry_count; i++) {
+        uint8_t w      = p[2 + i * 3];
+        uint8_t h      = p[3 + i * 3];
+        uint8_t repeat = p[4 + i * 3];
+        if (w == 0 || w > SRC_W || h == 0 || repeat < 1 || repeat > MAX_LAYOUT_ROWS) {
+            LOG_WRN("cell_grid: malformed LAYOUT_v2 entry %u (w=%u h=%u repeat=%u)",
+                    i, w, h, repeat);
+            return;
+        }
+        uint8_t  cols       = (uint8_t)(SRC_W / w);
+        uint16_t bytes_wide = (uint16_t)(((w + 7) / 8) * h);
+        if (bytes_wide > 255) {
+            /* CELL's bitmap_len field is a single byte — this cell size is
+             * unrepresentable on the wire, not just a firmware limit. */
+            LOG_WRN("cell_grid: LAYOUT_v2 entry %u cell too large "
+                    "(w=%u h=%u -> %u bytes)", i, w, h, bytes_wide);
+            return;
+        }
+        uint8_t bytes = (uint8_t)bytes_wide;
+        for (uint8_t r = 0; r < repeat; r++) {
+            if (!layout_stage_row(tmp, &row, &y, w, h, cols, bytes)) {
+                return;
+            }
+        }
+    }
+
+    memcpy(layout_rows, tmp, row * sizeof(tmp[0]));
     layout_row_count = (uint8_t)row;
 }
 
@@ -285,19 +372,18 @@ static void handle_cell(const uint8_t *p, uint16_t len)
                 row_index, layout_row_count);
         return;
     }
-    uint8_t tier_id = layout_row_tier[row_index];
-    const cell_tier_t *tier = &CELL_TIERS[tier_id];
+    const layout_row_t *row = &layout_rows[row_index];
 
-    if (col_index >= tier->cols || bitmap_len != tier->bytes ||
+    if (col_index >= row->cols || bitmap_len != row->bytes ||
         (uint16_t)(4 + bitmap_len) > len) {
-        LOG_WRN("cell_grid: CELL out of range (row=%u col=%u tier=%u "
-                "bitmap_len=%u)", row_index, col_index, tier_id, bitmap_len);
+        LOG_WRN("cell_grid: CELL out of range (row=%u col=%u cols=%u "
+                "bitmap_len=%u expected=%u)", row_index, col_index,
+                row->cols, bitmap_len, row->bytes);
         return;
     }
 
-    uint16_t x0 = (uint16_t)col_index * tier->w;
-    uint16_t y0 = layout_row_y[row_index];
-    cell_blit(x0, y0, tier->w, tier->h, p + 4);
+    uint16_t x0 = (uint16_t)col_index * row->w;
+    cell_blit(x0, row->y, row->w, row->h, p + 4);
 }
 
 static void handle_clear(void)
@@ -325,6 +411,9 @@ static ssize_t on_cell_grid_write(struct bt_conn *conn,
         break;
     case 0x02:
         handle_cell(p, len);
+        break;
+    case 0x04:
+        handle_layout_v2(p, len);
         break;
     case 0x03:
         handle_clear();
