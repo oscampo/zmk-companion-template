@@ -104,13 +104,21 @@ static void create_canvas(lv_obj_t *screen)
     lv_canvas_set_buffer(ble_canvas, canvas_buf, DST_W, DST_H,
                          LV_IMG_CF_TRUE_COLOR);
     lv_obj_set_pos(ble_canvas, 0, 0);
-    lv_canvas_fill_bg(ble_canvas, lv_color_black(), LV_OPA_COVER);
+    /* lv_color_black() physically renders as the panel's "on/bright" state
+     * on this display — see decode_and_rotate()/cell_blit() below. Fill
+     * with white so the canvas starts in the physically-off/black state
+     * before the first frame/cell arrives. */
+    lv_canvas_fill_bg(ble_canvas, lv_color_white(), LV_OPA_COVER);
     lv_obj_move_foreground(ble_canvas);
     attached_screen = screen;
 }
 
 /* ── Decode 1bpp portrait + rotate 90° CW → RGB565 landscape ────────────── */
 
+/* Panel is physically inverted relative to LVGL's color constants: calling
+ * lv_color_black() renders as bright/on, lv_color_white() as dark/off.
+ * Confirmed against zmk-companion's app-side content: bit=1 (lit) must
+ * show as the panel's on/bright state, so bit=1 -> lv_color_black() here. */
 static void decode_and_rotate(const uint8_t *src)
 {
     for (uint16_t py = 0; py < SRC_H; py++) {
@@ -120,8 +128,8 @@ static void decode_and_rotate(const uint8_t *src)
             uint16_t dx  = (DST_W - 1) - py;
             uint16_t dy  = px;
             canvas_buf[dy * DST_W + dx] = lit
-                ? lv_color_white()
-                : lv_color_black();
+                ? lv_color_black()
+                : lv_color_white();
         }
     }
 }
@@ -263,9 +271,10 @@ static void cell_blit(uint16_t x0, uint16_t y0, uint8_t w, uint8_t h,
             int      lit  = (byte >> (7 - (lx & 7))) & 1;
             uint16_t dx   = (DST_W - 1) - py;
             uint16_t dy   = px;
+            /* Panel-inverted, see decode_and_rotate() above. */
             canvas_buf[dy * DST_W + dx] = lit
-                ? lv_color_white()
-                : lv_color_black();
+                ? lv_color_black()
+                : lv_color_white();
         }
     }
 
@@ -390,7 +399,9 @@ static void handle_cell(const uint8_t *p, uint16_t len)
 
 static void handle_clear(void)
 {
-    memset(canvas_buf, 0, sizeof(canvas_buf)); /* RGB565 black = 0x0000 */
+    /* 0xFF bytes -> RGB565 0xFFFF (lv_color_white()'s value), which is the
+     * physically-off/dark state on this panel — see decode_and_rotate(). */
+    memset(canvas_buf, 0xFF, sizeof(canvas_buf));
     if (ble_canvas) {
         lv_obj_invalidate(ble_canvas);
     }
