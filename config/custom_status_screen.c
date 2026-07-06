@@ -49,6 +49,7 @@
 
 #include <zephyr/kernel.h>
 #include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/init.h>
 #include <zephyr/logging/log.h>
@@ -465,6 +466,19 @@ static ssize_t on_bitmap_write(struct bt_conn *conn,
     memcpy(frame_bufs[write_idx] + chunk_offset, data, data_len);
     if (chunk_offset + data_len == FRAME_BYTES) {
         frames_received++;
+        /* Only rotate the ping-pong pair if the consumer is done with the
+         * buffer it would become read_idx for. k_work_submit() on a
+         * still-pending/running item is a silent no-op (see
+         * cell_invalidate_handler() above for the same property), so
+         * without this guard the previous unconditional swap could hand
+         * flush_canvas a buffer that a subsequent frame's chunks are
+         * concurrently overwriting -> torn frame, not just a dropped one.
+         * Dropping the frame here (frames_received keeps counting it,
+         * frames_drawn does not) is the same "backlog" the periodic log
+         * already reports; it just no longer corrupts frame_bufs[]. */
+        if (k_work_busy_get(&flush_work) != 0) {
+            return (ssize_t)len;
+        }
         unsigned int key = irq_lock();
         uint8_t completed = write_idx;
         write_idx = read_idx;
@@ -542,6 +556,80 @@ ZMK_LISTENER(kbd_status, status_event_listener);
 ZMK_SUBSCRIPTION(kbd_status, zmk_ble_active_profile_changed);
 ZMK_SUBSCRIPTION(kbd_status, zmk_usb_conn_state_changed);
 ZMK_SUBSCRIPTION(kbd_status, zmk_endpoint_changed);
+
+/* ── BLE link diagnostics (throughput hypothesis) ───────────────────────────
+ *
+ * The 0x1525 GATT handler above and its consumer are both effectively free
+ * (a memcpy per chunk, a ~11k-iteration decode once/frame): they cannot
+ * explain multi-second display lag by themselves. The remaining unverified
+ * suspect is the physical BLE link between the companion-app host and this
+ * peripheral: WriteWithoutResponse only confirms local hand-off to the
+ * host's controller queue, not over-the-air delivery. If the negotiated
+ * connection interval is long, or only 1PHY is in use, 25 chunks/frame can
+ * take longer to actually drain over the air than the app's ~40-50ms log
+ * timestamps suggest, building a real backlog even at 1 frame/s -
+ * consistent with the display continuing to update for seconds after the
+ * source stops. This section only *observes* that (logs interval/PHY on
+ * connect and on every renegotiation) and opportunistically requests 2M PHY
+ * (strictly more throughput per air-time for the same power, no interval
+ * trade-off). It deliberately does NOT request a shorter connection
+ * interval - that is a real battery-vs-latency decision this comment is
+ * not authorized to make; see the session notes for that follow-up. */
+
+static void log_conn_params(struct bt_conn *conn, const char *why)
+{
+    struct bt_conn_info info;
+    if (bt_conn_get_info(conn, &info) != 0 || info.type != BT_CONN_TYPE_LE) {
+        return;
+    }
+#if defined(CONFIG_BT_USER_PHY_UPDATE)
+    uint8_t tx_phy = info.le.phy ? info.le.phy->tx_phy : 0;
+    uint8_t rx_phy = info.le.phy ? info.le.phy->rx_phy : 0;
+#else
+    uint8_t tx_phy = 0, rx_phy = 0;
+#endif
+    LOG_INF("kbd_display: %s interval=%u.%02ums latency=%u timeout=%ums phy=tx%u/rx%u",
+             why,
+             (info.le.interval * 125) / 100, (info.le.interval * 125) % 100,
+             info.le.latency, info.le.timeout * 10, tx_phy, rx_phy);
+}
+
+static void on_connected(struct bt_conn *conn, uint8_t err)
+{
+    if (err) return;
+    log_conn_params(conn, "connected,");
+
+#if defined(CONFIG_BT_USER_PHY_UPDATE)
+    static const struct bt_conn_le_phy_param phy_2m = {
+        .options     = BT_CONN_LE_PHY_OPT_NONE,
+        .pref_tx_phy = BT_GAP_LE_PHY_2M,
+        .pref_rx_phy = BT_GAP_LE_PHY_2M,
+    };
+    bt_conn_le_phy_update(conn, &phy_2m);
+#endif
+}
+
+static void on_le_param_updated(struct bt_conn *conn, uint16_t interval,
+                                uint16_t latency, uint16_t timeout)
+{
+    ARG_UNUSED(latency); ARG_UNUSED(timeout);
+    log_conn_params(conn, "params updated,");
+}
+
+#if defined(CONFIG_BT_USER_PHY_UPDATE)
+static void on_le_phy_updated(struct bt_conn *conn, struct bt_conn_le_phy_info *param)
+{
+    LOG_INF("kbd_display: PHY updated tx=%u rx=%u", param->tx_phy, param->rx_phy);
+}
+#endif
+
+BT_CONN_CB_DEFINE(kbd_display_conn_cb) = {
+    .connected        = on_connected,
+    .le_param_updated = on_le_param_updated,
+#if defined(CONFIG_BT_USER_PHY_UPDATE)
+    .le_phy_updated   = on_le_phy_updated,
+#endif
+};
 
 /* ── Canvas lifecycle ────────────────────────────────────────────────────── */
 
