@@ -557,24 +557,32 @@ ZMK_SUBSCRIPTION(kbd_status, zmk_ble_active_profile_changed);
 ZMK_SUBSCRIPTION(kbd_status, zmk_usb_conn_state_changed);
 ZMK_SUBSCRIPTION(kbd_status, zmk_endpoint_changed);
 
-/* ── BLE link diagnostics (throughput hypothesis) ───────────────────────────
+/* ── BLE link diagnostics + latency fix ──────────────────────────────────────
  *
- * The 0x1525 GATT handler above and its consumer are both effectively free
- * (a memcpy per chunk, a ~11k-iteration decode once/frame): they cannot
- * explain multi-second display lag by themselves. The remaining unverified
- * suspect is the physical BLE link between the companion-app host and this
- * peripheral: WriteWithoutResponse only confirms local hand-off to the
- * host's controller queue, not over-the-air delivery. If the negotiated
- * connection interval is long, or only 1PHY is in use, 25 chunks/frame can
- * take longer to actually drain over the air than the app's ~40-50ms log
- * timestamps suggest, building a real backlog even at 1 frame/s -
- * consistent with the display continuing to update for seconds after the
- * source stops. This section only *observes* that (logs interval/PHY on
- * connect and on every renegotiation) and opportunistically requests 2M PHY
- * (strictly more throughput per air-time for the same power, no interval
- * trade-off). It deliberately does NOT request a shorter connection
- * interval - that is a real battery-vs-latency decision this comment is
- * not authorized to make; see the session notes for that follow-up. */
+ * Session history: the 0x1525 GATT handler and its consumer are both
+ * effectively free (a memcpy per chunk, a ~11k-iteration decode once/frame),
+ * confirmed via kbd_display's received/drawn/backlog counter staying at
+ * backlog=0 during a live repro. The companion app's own send path was also
+ * measured clean (~40-90ms per frame, steady, no growth). Neither explains
+ * the ~2-3s visual display lag the user confirmed while watching the panel
+ * during that same clean-looking capture - so the gap is on the physical
+ * BLE link, after the app's WriteWithoutResponse call returns and before
+ * this peripheral's radio actually notices the data.
+ *
+ * A live connect log measured interval=15ms (fine) but latency=30: this
+ * peripheral is allowed to skip listening for up to 30 consecutive
+ * connection events before it must listen again, i.e. new data can sit
+ * unseen for up to (latency+1)*interval =~465ms in the worst case, and if
+ * that resync cost is paid repeatedly across a frame's chunks rather than
+ * once, it plausibly compounds into the reported multi-second lag.
+ * on_connected() below requests latency=0 to remove that stall, at the
+ * cost of the radio no longer being allowed to sleep between events while
+ * connected (battery trade-off, accepted for this test).
+ *
+ * A first attempt also requested 2M PHY on connect; that failed on this
+ * hardware (HCI status 0x1a, unsupported remote feature - logged as
+ * `Failed LE Set PHY (-5)`) and has been removed. PHY is still logged
+ * read-only for visibility. */
 
 static void log_conn_params(struct bt_conn *conn, const char *why)
 {
@@ -599,14 +607,21 @@ static void on_connected(struct bt_conn *conn, uint8_t err)
     if (err) return;
     log_conn_params(conn, "connected,");
 
-#if defined(CONFIG_BT_USER_PHY_UPDATE)
-    static const struct bt_conn_le_phy_param phy_2m = {
-        .options     = BT_CONN_LE_PHY_OPT_NONE,
-        .pref_tx_phy = BT_GAP_LE_PHY_2M,
-        .pref_rx_phy = BT_GAP_LE_PHY_2M,
-    };
-    bt_conn_le_phy_update(conn, &phy_2m);
-#endif
+    /* Measured on this hardware: interval=15ms (fine) but latency=30,
+     * i.e. the peripheral may sleep through up to 30 consecutive
+     * connection events before it's required to listen again. A
+     * WriteWithoutResponse burst that lands while we're deep in that
+     * skip cycle can sit unseen for up to (latency+1)*interval =~465ms
+     * before our radio next listens - and if that resync cost is paid
+     * per chunk rather than once per frame, it plausibly adds up to the
+     * multi-second display lag reported against the companion app.
+     * Requesting latency=0 trades idle battery life (radio must respond
+     * every interval instead of sleeping) for eliminating that stall
+     * entirely. Interval range kept close to the observed 15ms so this
+     * is purely a latency change, not an interval renegotiation. */
+    static const struct bt_le_conn_param low_latency_param =
+        BT_LE_CONN_PARAM_INIT(6, 12, 0, 400);
+    bt_conn_le_param_update(conn, &low_latency_param);
 }
 
 static void on_le_param_updated(struct bt_conn *conn, uint16_t interval,
@@ -616,19 +631,9 @@ static void on_le_param_updated(struct bt_conn *conn, uint16_t interval,
     log_conn_params(conn, "params updated,");
 }
 
-#if defined(CONFIG_BT_USER_PHY_UPDATE)
-static void on_le_phy_updated(struct bt_conn *conn, struct bt_conn_le_phy_info *param)
-{
-    LOG_INF("kbd_display: PHY updated tx=%u rx=%u", param->tx_phy, param->rx_phy);
-}
-#endif
-
 BT_CONN_CB_DEFINE(kbd_display_conn_cb) = {
     .connected        = on_connected,
     .le_param_updated = on_le_param_updated,
-#if defined(CONFIG_BT_USER_PHY_UPDATE)
-    .le_phy_updated   = on_le_phy_updated,
-#endif
 };
 
 /* ── Canvas lifecycle ────────────────────────────────────────────────────── */
