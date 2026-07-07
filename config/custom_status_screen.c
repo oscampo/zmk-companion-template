@@ -13,7 +13,7 @@
  *   Every 20th drawn frame logs received/drawn/backlog counters at INFO
  *   for diagnosing display lag vs. BLE delivery.
  *
- * Characteristic 0x1526 — Read + Notify, 4 bytes
+ * Characteristic 0x1526 — Read + Notify, 4 fixed bytes + variable-length name
  *   Byte 0:
  *     bit 0     : USB HID active (1 = host USB HID connected)
  *     bits [3:1]: active BLE profile index 0–4 (display as 1–5)
@@ -31,6 +31,11 @@
  *     or "hold last nonzero" logic - ZMK's own ~5s windowed average already
  *     decays to 0 when idle, a real "not typing" signal we deliberately
  *     don't suppress (see build_status_bytes()).
+ *   Bytes 4..N (optional, up to STATUS_NAME_MAX=24):
+ *     active layer's name (zmk_keymap_layer_name()), raw UTF-8, no length
+ *     prefix or terminator - the notify/read length itself is the boundary.
+ *     Absent entirely on old firmware/app builds that only send/expect 4
+ *     bytes; a reader that only looks at bytes 0-3 is unaffected either way.
  *   Notifies on BLE connect, profile/layer/WPM change, USB/endpoint change.
  *   Battery level: use standard BAS 0x180F / 0x2A19 (ZMK provides it).
  *
@@ -167,7 +172,15 @@ static K_WORK_DEFINE(flush_work, flush_canvas);
 
 /* ── Status bytes ────────────────────────────────────────────────────────── */
 
-static void build_status_bytes(uint8_t out[4])
+/* Layer name is appended as raw UTF-8 (no length prefix, no null terminator -
+ * the notify/read length itself is the boundary) after the 4 fixed bytes, so
+ * old app builds that only read 4 bytes are unaffected, they just never look
+ * past them. STATUS_NAME_MAX caps how much of a long layer label we bother
+ * sending; ATT payload has room for far more, this is purely so a pathological
+ * label can't grow this past a stack buffer. */
+#define STATUS_NAME_MAX 24
+
+static uint16_t build_status_bytes(uint8_t *out, uint16_t out_max)
 {
     uint8_t flags = 0;
 #if IS_ENABLED(CONFIG_ZMK_USB)
@@ -190,7 +203,8 @@ static void build_status_bytes(uint8_t out[4])
      * currently-active layer, ZMK's own definition of "the active layer"
      * for stacked/momentary layers. Truncated to uint8_t; ZMK caps layer
      * count well under 256 so this never wraps in practice. */
-    out[2] = (uint8_t)zmk_keymap_highest_layer_active();
+    uint8_t layer_index = (uint8_t)zmk_keymap_highest_layer_active();
+    out[2] = layer_index;
     /* Raw zmk_wpm_get_state(), no smoothing/hold-last-value logic here on
      * purpose: ZMK's own windowed average already decays to 0 within its
      * ~5s window when idle, which is a real, free "not typing" signal.
@@ -201,6 +215,26 @@ static void build_status_bytes(uint8_t out[4])
      * int state is unbounded in principle; the field is only a byte. */
     int wpm = zmk_wpm_get_state();
     out[3] = (uint8_t)CLAMP(wpm, 0, 255);
+
+    uint16_t len = 4;
+    /* Layer index and layer id are different concepts in ZMK (id is stable
+     * across reordering, index is positional) - zmk_keymap_layer_name()
+     * takes an id, so it must be resolved from the index first. */
+    zmk_keymap_layer_id_t layer_id = zmk_keymap_layer_index_to_id(layer_index);
+    const char *name = zmk_keymap_layer_name(layer_id);
+    if (name != NULL) {
+        uint16_t name_len = (uint16_t)strlen(name);
+        if (name_len > STATUS_NAME_MAX) {
+            name_len = STATUS_NAME_MAX;
+        }
+        uint16_t avail = (out_max > len) ? (uint16_t)(out_max - len) : 0;
+        if (name_len > avail) {
+            name_len = avail;
+        }
+        memcpy(out + len, name, name_len);
+        len += name_len;
+    }
+    return len;
 }
 
 /* ── Cell-grid protocol (0x1527) ─────────────────────────────────────────── */
@@ -522,19 +556,19 @@ static ssize_t on_status_read(struct bt_conn *conn,
                               const struct bt_gatt_attr *attr,
                               void *buf, uint16_t len, uint16_t offset)
 {
-    uint8_t status[4];
-    build_status_bytes(status);
+    uint8_t status[4 + STATUS_NAME_MAX];
+    uint16_t status_len = build_status_bytes(status, sizeof(status));
     return bt_gatt_attr_read(conn, attr, buf, len, offset,
-                             status, sizeof(status));
+                             status, status_len);
 }
 
 static void on_status_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
 {
     if (value == BT_GATT_CCC_NOTIFY) {
         /* Client just subscribed — send current state immediately */
-        uint8_t status[4];
-        build_status_bytes(status);
-        bt_gatt_notify(NULL, attr - 1, status, sizeof(status));
+        uint8_t status[4 + STATUS_NAME_MAX];
+        uint16_t status_len = build_status_bytes(status, sizeof(status));
+        bt_gatt_notify(NULL, attr - 1, status, status_len);
     }
 }
 
@@ -575,9 +609,9 @@ BT_GATT_SERVICE_DEFINE(keyboard_display_svc,
 
 static int status_event_listener(const zmk_event_t *eh)
 {
-    uint8_t status[4];
-    build_status_bytes(status);
-    bt_gatt_notify(NULL, &keyboard_display_svc.attrs[4], status, sizeof(status));
+    uint8_t status[4 + STATUS_NAME_MAX];
+    uint16_t status_len = build_status_bytes(status, sizeof(status));
+    bt_gatt_notify(NULL, &keyboard_display_svc.attrs[4], status, status_len);
     return ZMK_EV_EVENT_BUBBLE;
 }
 
