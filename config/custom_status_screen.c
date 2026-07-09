@@ -13,7 +13,7 @@
  *   Every 20th drawn frame logs received/drawn/backlog counters at INFO
  *   for diagnosing display lag vs. BLE delivery.
  *
- * Characteristic 0x1526 — Read + Notify, 2 bytes
+ * Characteristic 0x1526 — Read + Notify, 4 fixed bytes + variable-length name
  *   Byte 0:
  *     bit 0     : USB HID active (1 = host USB HID connected)
  *     bits [3:1]: active BLE profile index 0–4 (display as 1–5)
@@ -22,7 +22,21 @@
  *     bits [4:0]: bonded mask — bit i set if BLE profile i has a bonded peer
  *                 (regardless of whether it's connected right now)
  *     bits [7:5]: reserved, always 0
- *   Notifies on BLE connect, profile change, USB/endpoint state change.
+ *   Byte 2:
+ *     active layer index (zmk_keymap_highest_layer_active()), 0-based, the
+ *     highest-numbered currently-active layer per ZMK's own definition of
+ *     "the active layer" for stacked/momentary layers.
+ *   Byte 3:
+ *     zmk_wpm_get_state(), clamped to 0-255. Raw pass-through, no smoothing
+ *     or "hold last nonzero" logic - ZMK's own ~5s windowed average already
+ *     decays to 0 when idle, a real "not typing" signal we deliberately
+ *     don't suppress (see build_status_bytes()).
+ *   Bytes 4..N (optional, up to STATUS_NAME_MAX=24):
+ *     active layer's name (zmk_keymap_layer_name()), raw UTF-8, no length
+ *     prefix or terminator - the notify/read length itself is the boundary.
+ *     Absent entirely on old firmware/app builds that only send/expect 4
+ *     bytes; a reader that only looks at bytes 0-3 is unaffected either way.
+ *   Notifies on BLE connect, profile/layer/WPM change, USB/endpoint change.
  *   Battery level: use standard BAS 0x180F / 0x2A19 (ZMK provides it).
  *
  * Characteristic 0x1527 — Write (WriteWithResponse), cell-grid protocol v1.1
@@ -48,7 +62,9 @@
  */
 
 #include <zephyr/kernel.h>
+#include <zephyr/sys/util.h>
 #include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/init.h>
 #include <zephyr/logging/log.h>
@@ -59,9 +75,13 @@
 #include <zmk/ble.h>
 #include <zmk/usb.h>
 #include <zmk/endpoints.h>
+#include <zmk/keymap.h>
+#include <zmk/wpm.h>
 #include <zmk/events/ble_active_profile_changed.h>
 #include <zmk/events/usb_conn_state_changed.h>
 #include <zmk/events/endpoint_changed.h>
+#include <zmk/events/layer_state_changed.h>
+#include <zmk/events/wpm_state_changed.h>
 
 #ifndef ZMK_BLE_PROFILE_COUNT
 #define ZMK_BLE_PROFILE_COUNT 5
@@ -152,7 +172,15 @@ static K_WORK_DEFINE(flush_work, flush_canvas);
 
 /* ── Status bytes ────────────────────────────────────────────────────────── */
 
-static void build_status_bytes(uint8_t out[2])
+/* Layer name is appended as raw UTF-8 (no length prefix, no null terminator -
+ * the notify/read length itself is the boundary) after the 4 fixed bytes, so
+ * old app builds that only read 4 bytes are unaffected, they just never look
+ * past them. STATUS_NAME_MAX caps how much of a long layer label we bother
+ * sending; ATT payload has room for far more, this is purely so a pathological
+ * label can't grow this past a stack buffer. */
+#define STATUS_NAME_MAX 24
+
+static uint16_t build_status_bytes(uint8_t *out, uint16_t out_max)
 {
     uint8_t flags = 0;
 #if IS_ENABLED(CONFIG_ZMK_USB)
@@ -171,6 +199,42 @@ static void build_status_bytes(uint8_t out[2])
 
     out[0] = flags;
     out[1] = bonded;
+    /* zmk_keymap_highest_layer_active(): index of the highest-numbered
+     * currently-active layer, ZMK's own definition of "the active layer"
+     * for stacked/momentary layers. Truncated to uint8_t; ZMK caps layer
+     * count well under 256 so this never wraps in practice. */
+    uint8_t layer_index = (uint8_t)zmk_keymap_highest_layer_active();
+    out[2] = layer_index;
+    /* Raw zmk_wpm_get_state(), no smoothing/hold-last-value logic here on
+     * purpose: ZMK's own windowed average already decays to 0 within its
+     * ~5s window when idle, which is a real, free "not typing" signal.
+     * Suppressing that zero app-side (to keep the last nonzero reading on
+     * screen) would silently reintroduce the same stale-value-shown-as-live
+     * problem the custom-token staleness balloons exist to warn about, for
+     * no benefit weighed against the added state. Clamped since ZMK's
+     * int state is unbounded in principle; the field is only a byte. */
+    int wpm = zmk_wpm_get_state();
+    out[3] = (uint8_t)CLAMP(wpm, 0, 255);
+
+    uint16_t len = 4;
+    /* Layer index and layer id are different concepts in ZMK (id is stable
+     * across reordering, index is positional) - zmk_keymap_layer_name()
+     * takes an id, so it must be resolved from the index first. */
+    zmk_keymap_layer_id_t layer_id = zmk_keymap_layer_index_to_id(layer_index);
+    const char *name = zmk_keymap_layer_name(layer_id);
+    if (name != NULL) {
+        uint16_t name_len = (uint16_t)strlen(name);
+        if (name_len > STATUS_NAME_MAX) {
+            name_len = STATUS_NAME_MAX;
+        }
+        uint16_t avail = (out_max > len) ? (uint16_t)(out_max - len) : 0;
+        if (name_len > avail) {
+            name_len = avail;
+        }
+        memcpy(out + len, name, name_len);
+        len += name_len;
+    }
+    return len;
 }
 
 /* ── Cell-grid protocol (0x1527) ─────────────────────────────────────────── */
@@ -465,6 +529,19 @@ static ssize_t on_bitmap_write(struct bt_conn *conn,
     memcpy(frame_bufs[write_idx] + chunk_offset, data, data_len);
     if (chunk_offset + data_len == FRAME_BYTES) {
         frames_received++;
+        /* Only rotate the ping-pong pair if the consumer is done with the
+         * buffer it would become read_idx for. k_work_submit() on a
+         * still-pending/running item is a silent no-op (see
+         * cell_invalidate_handler() above for the same property), so
+         * without this guard the previous unconditional swap could hand
+         * flush_canvas a buffer that a subsequent frame's chunks are
+         * concurrently overwriting -> torn frame, not just a dropped one.
+         * Dropping the frame here (frames_received keeps counting it,
+         * frames_drawn does not) is the same "backlog" the periodic log
+         * already reports; it just no longer corrupts frame_bufs[]. */
+        if (k_work_busy_get(&flush_work) != 0) {
+            return (ssize_t)len;
+        }
         unsigned int key = irq_lock();
         uint8_t completed = write_idx;
         write_idx = read_idx;
@@ -479,19 +556,19 @@ static ssize_t on_status_read(struct bt_conn *conn,
                               const struct bt_gatt_attr *attr,
                               void *buf, uint16_t len, uint16_t offset)
 {
-    uint8_t status[2];
-    build_status_bytes(status);
+    uint8_t status[4 + STATUS_NAME_MAX];
+    uint16_t status_len = build_status_bytes(status, sizeof(status));
     return bt_gatt_attr_read(conn, attr, buf, len, offset,
-                             status, sizeof(status));
+                             status, status_len);
 }
 
 static void on_status_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
 {
     if (value == BT_GATT_CCC_NOTIFY) {
         /* Client just subscribed — send current state immediately */
-        uint8_t status[2];
-        build_status_bytes(status);
-        bt_gatt_notify(NULL, attr - 1, status, sizeof(status));
+        uint8_t status[4 + STATUS_NAME_MAX];
+        uint16_t status_len = build_status_bytes(status, sizeof(status));
+        bt_gatt_notify(NULL, attr - 1, status, status_len);
     }
 }
 
@@ -532,9 +609,9 @@ BT_GATT_SERVICE_DEFINE(keyboard_display_svc,
 
 static int status_event_listener(const zmk_event_t *eh)
 {
-    uint8_t status[2];
-    build_status_bytes(status);
-    bt_gatt_notify(NULL, &keyboard_display_svc.attrs[4], status, sizeof(status));
+    uint8_t status[4 + STATUS_NAME_MAX];
+    uint16_t status_len = build_status_bytes(status, sizeof(status));
+    bt_gatt_notify(NULL, &keyboard_display_svc.attrs[4], status, status_len);
     return ZMK_EV_EVENT_BUBBLE;
 }
 
@@ -542,6 +619,87 @@ ZMK_LISTENER(kbd_status, status_event_listener);
 ZMK_SUBSCRIPTION(kbd_status, zmk_ble_active_profile_changed);
 ZMK_SUBSCRIPTION(kbd_status, zmk_usb_conn_state_changed);
 ZMK_SUBSCRIPTION(kbd_status, zmk_endpoint_changed);
+ZMK_SUBSCRIPTION(kbd_status, zmk_layer_state_changed);
+ZMK_SUBSCRIPTION(kbd_status, zmk_wpm_state_changed);
+
+/* ── BLE link diagnostics + latency fix ──────────────────────────────────────
+ *
+ * Session history: the 0x1525 GATT handler and its consumer are both
+ * effectively free (a memcpy per chunk, a ~11k-iteration decode once/frame),
+ * confirmed via kbd_display's received/drawn/backlog counter staying at
+ * backlog=0 during a live repro. The companion app's own send path was also
+ * measured clean (~40-90ms per frame, steady, no growth). Neither explains
+ * the ~2-3s visual display lag the user confirmed while watching the panel
+ * during that same clean-looking capture - so the gap is on the physical
+ * BLE link, after the app's WriteWithoutResponse call returns and before
+ * this peripheral's radio actually notices the data.
+ *
+ * A live connect log measured interval=15ms (fine) but latency=30: this
+ * peripheral is allowed to skip listening for up to 30 consecutive
+ * connection events before it must listen again, i.e. new data can sit
+ * unseen for up to (latency+1)*interval =~465ms in the worst case, and if
+ * that resync cost is paid repeatedly across a frame's chunks rather than
+ * once, it plausibly compounds into the reported multi-second lag.
+ * on_connected() below requests latency=0 to remove that stall, at the
+ * cost of the radio no longer being allowed to sleep between events while
+ * connected (battery trade-off, accepted for this test).
+ *
+ * A first attempt also requested 2M PHY on connect; that failed on this
+ * hardware (HCI status 0x1a, unsupported remote feature - logged as
+ * `Failed LE Set PHY (-5)`) and has been removed. PHY is still logged
+ * read-only for visibility. */
+
+static void log_conn_params(struct bt_conn *conn, const char *why)
+{
+    struct bt_conn_info info;
+    if (bt_conn_get_info(conn, &info) != 0 || info.type != BT_CONN_TYPE_LE) {
+        return;
+    }
+#if defined(CONFIG_BT_USER_PHY_UPDATE)
+    uint8_t tx_phy = info.le.phy ? info.le.phy->tx_phy : 0;
+    uint8_t rx_phy = info.le.phy ? info.le.phy->rx_phy : 0;
+#else
+    uint8_t tx_phy = 0, rx_phy = 0;
+#endif
+    LOG_INF("kbd_display: %s interval=%u.%02ums latency=%u timeout=%ums phy=tx%u/rx%u",
+             why,
+             (info.le.interval * 125) / 100, (info.le.interval * 125) % 100,
+             info.le.latency, info.le.timeout * 10, tx_phy, rx_phy);
+}
+
+static void on_connected(struct bt_conn *conn, uint8_t err)
+{
+    if (err) return;
+    log_conn_params(conn, "connected,");
+
+    /* Measured on this hardware: interval=15ms (fine) but latency=30,
+     * i.e. the peripheral may sleep through up to 30 consecutive
+     * connection events before it's required to listen again. A
+     * WriteWithoutResponse burst that lands while we're deep in that
+     * skip cycle can sit unseen for up to (latency+1)*interval =~465ms
+     * before our radio next listens - and if that resync cost is paid
+     * per chunk rather than once per frame, it plausibly adds up to the
+     * multi-second display lag reported against the companion app.
+     * Requesting latency=0 trades idle battery life (radio must respond
+     * every interval instead of sleeping) for eliminating that stall
+     * entirely. Interval range kept close to the observed 15ms so this
+     * is purely a latency change, not an interval renegotiation. */
+    static const struct bt_le_conn_param low_latency_param =
+        BT_LE_CONN_PARAM_INIT(6, 12, 0, 400);
+    bt_conn_le_param_update(conn, &low_latency_param);
+}
+
+static void on_le_param_updated(struct bt_conn *conn, uint16_t interval,
+                                uint16_t latency, uint16_t timeout)
+{
+    ARG_UNUSED(latency); ARG_UNUSED(timeout);
+    log_conn_params(conn, "params updated,");
+}
+
+BT_CONN_CB_DEFINE(kbd_display_conn_cb) = {
+    .connected        = on_connected,
+    .le_param_updated = on_le_param_updated,
+};
 
 /* ── Canvas lifecycle ────────────────────────────────────────────────────── */
 
