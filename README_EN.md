@@ -1,48 +1,64 @@
 - [Chinese](README.md)
 - [English](README_EN.md)
 
-# 睫毛外设 (Eyelash Peripherals) Corne ZMK Repository
+# ZMK Companion Template
 
-**This keyboard is not the same as [foostan's Corne](https://github.com/foostan/crkbd). It will not work with standard `corne` firmware.**
+The recommended ZMK firmware starting point for
+[**zmk-companion**](https://github.com/oscampo/zmk-companion): fork this
+repo and GitHub Actions builds you a ready-to-flash firmware with the BLE
+display feature already enabled, plus a minimal keymap you make your own.
+New to all this? Start with zmk-companion's
+[`getting_started.md`](https://github.com/oscampo/zmk-companion/blob/main/docs/getting_started.md)
+instead of this file, it walks the whole flow end to end.
 
-![Photo of Eyelash Peripherals Corne](https://ae01.alicdn.com/kf/Sa797fee25edd44248fbfdb0e13d44e00B.jpg)
+Built and tested against the "eyelash_corne" split keyboard hardware
+(see below). If you have a different ZMK board with a `nice_view` display,
+see "Other boards" further down, the display feature itself isn't tied to
+this specific hardware, that part just hasn't been tried elsewhere yet.
 
-If you need a 3D model of this keyboard, email `380465425@qq.com`.
-
-## Instructions
+## Quick start
 
 1. [Fork this repository](https://docs.github.com/en/get-started/quickstart/fork-a-repo#forking-a-repository).
-2. [Click the **Actions** tab and make sure the workflow is enabled](https://docs.github.com/en/actions/managing-workflow-runs-and-deployments/managing-workflow-runs/disabling-and-enabling-a-workflow#enabling-a-workflow).
-3. Make sure the `eyelash_corne` project in [`config/west.yml`](config/west.yml) still works. The `boards/arm/eyelash_corne` folder will be downloaded from this URL.
-4. If there is still a `boards/arm/eyelash_corne` folder in your fork, delete it.
+2. [Open the **Actions** tab and enable workflows](https://docs.github.com/en/actions/managing-workflow-runs-and-deployments/managing-workflow-runs/disabling-and-enabling-a-workflow#enabling-a-workflow)
+   if GitHub asks you to.
+3. Wait for "Build ZMK firmware" to finish, then download the
+   `eyelash_corne_left`/`eyelash_corne_right` artifacts from that run and
+   flash each half.
+4. Customize your keymap whenever you want, see [Keymap](#keymap) below.
 
-**If you already have a ZMK config repository, [you can add this one as a module instead of forking](https://zmk.dev/docs/features/modules#building-with-modules).**
+**Already have your own ZMK config repo?** [Add this one as a module instead of forking it](https://zmk.dev/docs/features/modules#building-with-modules),
+see "Other boards" below for why that's usually enough to get the display
+feature without copying any files.
+
+**Note for forks**: [`config/west.yml`](config/west.yml) already pulls
+`boards/arm/eyelash_corne` from its upstream URL. If your fork still has a
+local `boards/arm/eyelash_corne` folder alongside that (it may, depending on
+how you forked), delete the local copy, the west-fetched one is what's
+actually used.
 
 ## BLE Keyboard Display
 
-This repo also builds a firmware feature unrelated to eyelash_corne's specific
-hardware: a BLE GATT service (`config/custom_status_screen.c`) that renders
-live data (clock, weather, custom text, whole page layouts) on the
-keyboard's `nice_view` display, fed by a companion Windows app,
-[**zmk-companion**](https://github.com/oscampo/zmk-companion). See that
-repo's [user guide](https://github.com/oscampo/zmk-companion/blob/main/docs/user_guide.md)
+The actual feature this template exists for: a BLE GATT service
+(`config/custom_status_screen.c`) that renders live data (clock, weather,
+custom text, whole page layouts) on the keyboard's `nice_view` display, fed
+by the zmk-companion Windows app. See its
+[user guide](https://github.com/oscampo/zmk-companion/blob/main/docs/user_guide.md)
 for what it can do.
 
-**Already have eyelash_corne firmware from this repo?** You already have it:
-`build.yaml` enables it (`CONFIG_KBD_BLE_DISPLAY=y`) for the
-`eyelash_corne_left` build (the split's central half), so the `.uf2` GitHub
-Actions produces for that board already has it. Nothing extra to build.
+Forking this repo already gets it: `build.yaml` enables it
+(`CONFIG_KBD_BLE_DISPLAY=y`) for the `eyelash_corne_left` build (the split's
+central half), so the `.uf2` GitHub Actions produces for that board already
+has it, nothing extra to build.
 
-**Different ZMK board with a `nice_view` display?** The display code has no
-eyelash_corne-specific dependencies, it only needs the standard `nice_view`
-shield and a split ZMK board (it runs on the central half only). Since this
-repo is already usable as a west module (see above), you likely don't need
-to fork it or copy any files: add it as a module in your own config's
-`west.yml` and build your own board with `-DCONFIG_KBD_BLE_DISPLAY=y`.
-
-This hasn't been verified on a board other than eyelash_corne. If you try it
-on a different board, please open an issue (here or on zmk-companion) with
-the result either way, working or not, so this note can stop being a guess.
+**Other boards**: the display code has no eyelash_corne-specific
+dependencies, it only needs the standard `nice_view` shield and a split ZMK
+board (it runs on the central half only). Since this repo is already usable
+as a west module, you likely don't need to fork it or copy any files: add
+it as a module in your own config's `west.yml` and build your own board
+with `-DCONFIG_KBD_BLE_DISPLAY=y`. This hasn't been verified on a board
+other than eyelash_corne, if you try it, please open an issue (here or on
+zmk-companion) with the result either way, working or not, so this note
+can stop being a guess.
 
 ## Keymap
 
@@ -60,3 +76,13 @@ hand, see [ZMK's keymap docs](https://zmk.dev/docs/keymaps) for the syntax.
 
 ![Diagram of config/eyelash_corne.keymap](keymap-drawer/eyelash_corne.svg "generated by @caksoylar's Keymap Drawer")
 
+## Hardware
+
+**This keyboard is not the same as [foostan's Corne](https://github.com/foostan/crkbd). It will not work with standard `corne` firmware.**
+
+![Photo of Eyelash Peripherals Corne](https://ae01.alicdn.com/kf/Sa797fee25edd44248fbfdb0e13d44e00B.jpg)
+
+This repo's board definitions originate from the "睫毛外设" (Eyelash
+Peripherals) vendor's own ZMK config for this keyboard. For a 3D model of
+the physical keyboard itself, contact the vendor at `380465425@qq.com`,
+that's hardware support, unrelated to zmk-companion or this template.
