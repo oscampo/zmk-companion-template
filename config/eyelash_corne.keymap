@@ -1,231 +1,50 @@
-#define ZMK_POINTING_DEFAULT_MOVE_VAL 1200  // 600
-#define ZMK_POINTING_DEFAULT_SCRL_VAL 25   // 10
-
-#include <input/processors.dtsi>
-#include <zephyr/dt-bindings/input/input-event-codes.h>
-#include <behaviors/unicode.dtsi>
-#include <zmk-unicode/keys-extra.h>  // All glyphs except CJK
 #include <behaviors.dtsi>
 #include <dt-bindings/zmk/bt.h>
 #include <dt-bindings/zmk/keys.h>
 #include <dt-bindings/zmk/outputs.h>
-#include <dt-bindings/zmk/pointing.h>
 #include <dt-bindings/zmk/rgb.h>
 
-&mmv_input_listener { input-processors = <&zip_xy_scaler 2 1>; };
-
-&msc_input_listener { input-processors = <&zip_scroll_scaler 2 1>; };
-
-&mt {
-    tapping-term-ms = <280>; // This is the value already set by default
-    flavor = "balanced";
-    quick-tap-ms = <175>;
-    require-prior-idle-ms = <150>;
-};
-
 / {
-    behaviors {
-        mt_shift: mt_shift {
-            compatible = "zmk,behavior-hold-tap";
-            label = "MT_SHIFT";
-            #binding-cells = <2>;
-            bindings = <&kp>, <&kp>;
-
-            tapping-term-ms = <280>;
-            flavor = "balanced";
-            quick-tap-ms = <175>;
-            require-prior-idle-ms = <50>;
-        };
-    };
-};
-
-&msc {
-    acceleration-exponent = <0>;      // 0
-    time-to-max-speed-ms = <0>;       // 300
-    delay-ms = <0>;                   // 0
-};
-
-&mmv {
-    time-to-max-speed-ms = <500>;
-    acceleration-exponent = <1>;
-    trigger-period-ms = <16>;
-};
-
-/ {
-    behaviors {
-        td_mt: tap_dance_mod_tap {
-            compatible = "zmk,behavior-tap-dance";
-            #binding-cells = <0>;
-            tapping-term-ms = <200>;
-            bindings = <&hold_tap 0 PERIOD>, <&kp COLON>;
-        };
-
-        td0: td0 {
-            compatible = "zmk,behavior-tap-dance";
-            display-name = "Shift/Caps Lock Tap Dance";
-            #binding-cells = <0>;
-            bindings = <&kp LEFT_SHIFT>, <&kp CAPS>;
-        };
-
-        hold_tap: hold_tap {
-            compatible = "zmk,behavior-hold-tap";
-            label = "HOLD_TAP";
-            bindings = <&triple_dots>, <&kp>;
-
-            #binding-cells = <2>;
-            tapping-term-ms = <200>;
-        };
-
-        win_ios: win_ios {
-            compatible = "zmk,behavior-key-toggle";
-            label = "WIN_IOS";
-            #binding-cells = <1>;
-        };
-
-        bhv_code_block: bhv_code_block {
-            compatible = "zmk,behavior-hold-tap";
-            label = "BHV_CODE_BLOCK";
-            bindings = <&code_block>, <&kp>;
-
-            #binding-cells = <2>;
-            tapping-term-ms = <150>;
-        };
-    };
-
-    rgb_encoder: rgb_encoder {
-        compatible = "zmk,behavior-sensor-rotate";
-        #sensor-binding-cells = <0>;
-        bindings = <&rgb_ug RGB_BRI>, <&rgb_ug RGB_BRD>;
-    };
-
-    scroll_encoder: scroll_encoder {
-        compatible = "zmk,behavior-sensor-rotate";
-        #sensor-binding-cells = <0>;
-        bindings = <&msc SCRL_DOWN>, <&msc SCRL_UP>;
-
-        tap-ms = <100>;
-    };
-
-    macros {
-        mil_bendiciones: mil_bendiciones {
-            compatible = "zmk,behavior-macro";
-            #binding-cells = <0>;
-            bindings =
-                <&macro_tap_time 1>,
-                <&kp M &kp I &kp L &kp SPACE &kp B &kp E &kp N &kp D &kp I &kp C &kp I &kp O &kp N &kp E &kp S>;
-
-            label = "MIL_BENDICIONES";
-        };
-
-        triple_dots: triple_dots {
-            compatible = "zmk,behavior-macro";
-            #binding-cells = <0>;
-            bindings = <&macro_tap_time 1>, <&kp DOT &kp DOT &kp DOT>;
-
-            label = "TRIPLE_DOTS";
-        };
-
-        mil_gracias: mil_gracias {
-            compatible = "zmk,behavior-macro";
-            #binding-cells = <0>;
-            bindings =
-                <&macro_tap_time 1>,
-                <&kp M &kp I &kp L &kp SPACE &kp G &kp R &kp A &kp C &kp I &kp A &kp S>;
-
-            label = "MIL_GRACIAS";
-        };
-
-        code_block: code_block {
-            compatible = "zmk,behavior-macro";
-            #binding-cells = <0>;
-            bindings =
-                <&macro_tap_time 1>,
-                <&kp GRAVE &kp GRAVE &kp GRAVE &kp SPACE &kp LS(ENTER) &kp LS(ENTER) &kp GRAVE &kp GRAVE &kp GRAVE &kp SPACE &kp UP_ARROW>;
-
-            label = "CODE_BLOCK";
-        };
-    };
-
-    combos {
-        compatible = "zmk,combos";
-
-        cmb_mil_bendiciones {
-            bindings = <&mil_bendiciones>;
-            key-positions = <33 37>;
-        };
-
-        cmb_mil_gracias {
-            bindings = <&mil_gracias>;
-            key-positions = <18 37>;
-        };
-
-        semi_colon {
-            bindings = <&kp COLON>;
-            key-positions = <38 39>;
-        };
-    };
-
     keymap {
         compatible = "zmk,keymap";
 
         default_layer {
             display-name = "QWERTY";
             bindings = <
-&kp ESCAPE                   &kp Q               &kp W           &kp E               &kp R                   &kp T                            &none         &kp Y        &kp U                    &kp I                &kp O            &kp P                           &kp BSPC
-&kp TAB                      &mt LEFT_COMMAND A  &mt LEFT_ALT S  &mt LEFT_CONTROL D  &mt_shift LEFT_SHIFT F  &kp G                     &none  &none  &none  &kp H        &mt_shift RIGHT_SHIFT J  &mt RIGHT_CONTROL K  &mt RIGHT_ALT L  &mt RIGHT_COMMAND SINGLE_QUOTE  &kp LS(SINGLE_QUOTE)
-&mt LA(LC(DELETE)) CAPSLOCK  &kp Z               &kp X           &kp C               &kp V                   &kp B        &kp SPACE           &none         &kp N        &kp M                    &mt SEMICOLON COMMA  &td_mt           &kp FSLH                        &mt LEFT_ALT ENTER
-                                                                 &kp LEFT_CONTROL    &lt 3 LEFT_ALT          &lt 2 ENTER                                    &lt 1 SPACE  &lt 5 DEL                &kp RALT
+&kp ESCAPE     &kp Q  &kp W  &kp E  &kp R  &kp T                     &none         &kp Y  &kp U      &kp I      &kp O    &kp P     &kp BSPC
+&kp TAB        &kp A  &kp S  &kp D  &kp F  &kp G       &none  &none  &none         &kp H  &kp J      &kp K      &kp L    &kp SEMI  &kp SQT
+&kp CAPSLOCK   &kp Z  &kp X  &kp C  &kp V  &kp B  &kp SPACE           &none         &kp N  &kp M      &kp COMMA  &kp DOT  &kp FSLH  &kp ENTER
+                             &kp LEFT_CONTROL  &lt 3 LEFT_ALT  &lt 2 ENTER                 &lt 1 SPACE  &kp DEL    &kp RALT
             >;
-
-            // sensor-bindings = <&inc_dec_kp C_VOLUME_UP C_VOLUME_DOWN>;
         };
 
         lower_layer {
             display-name = "NUMBER";
             bindings = <
-&bhv_code_block 0 GRAVE  &kp LS(NUMBER_1)      &kp LS(NUMBER_2)  &kp LS(NUMBER_3)  &kp LS(NUMBER_4)  &kp LS(NUMBER_5)                   &none         &kp LS(NUMBER_6)       &kp LS(NUMBER_7)     &kp LS(NUMBER_8)  &kp LS(NUMBER_9)  &kp LS(NUMBER_0)  &kp BSPC
-&kp LS(GRAVE)            &kp KP_N1             &kp KP_N2         &kp KP_N3         &kp KP_N4         &kp KP_N5                   &none  &none  &none  &kp KP_N6              &kp KP_N7            &kp KP_N8         &kp KP_N9         &kp KP_N0         &mt LS(BACKSLASH) BACKSLASH
-&kp KP_NLCK              &kp LS(LEFT_BRACKET)  &kp LEFT_BRACKET  &kp LESS_THAN     &kp GREATER_THAN  &kp RIGHT_BRACKET  &none           &none         &kp LS(RIGHT_BRACKET)  &mt MINUS LS(EQUAL)  &trans            &trans            &kp EQUAL         &mt LS(MINUS) MINUS
-                                                                 &trans            &kp LEFT_ALT      &trans                                           &trans                 &trans               &trans
+&kp GRAVE      &kp N1  &kp N2  &kp N3  &kp N4  &kp N5                     &none         &kp N6  &kp N7  &kp N8         &kp N9    &kp N0     &kp BSPC
+&kp TILDE      &kp EXCL  &kp AT  &kp HASH  &kp DLLR  &kp PRCNT   &none  &none  &none    &kp CARET  &kp AMPS  &kp ASTRK  &kp LPAR  &kp RPAR  &kp BACKSLASH
+&trans         &kp LBRC  &kp LEFT_BRACKET  &kp LESS_THAN  &kp GREATER_THAN  &kp RIGHT_BRACKET  &trans  &none  &kp RBRC  &kp MINUS  &trans     &trans    &kp EQUAL  &kp UNDER
+                                &trans  &trans  &trans                                     &trans     &trans     &trans
             >;
         };
 
         raise_layer {
-            display-name = "SYMBOL";
+            display-name = "NAV/FN";
             bindings = <
-&trans  &kp PAGE_UP    &mt LC(HOME) HOME  &kp UP_ARROW    &mt LC(END) END  &none                       &none         &kp F6               &kp F7                   &kp F8        &kp F9       &kp F10   &kp BSPC
-&trans  &kp PAGE_DOWN  &kp LEFT_ARROW     &kp DOWN_ARROW  &kp RIGHT_ARROW  &none                &none  &none  &none  &kp LS(RIGHT_ARROW)  &kp LS(LC(RIGHT_ARROW))  &kp LC(HOME)  &kp LC(END)  &kp BSLH  &kp GRAVE
-&trans  &kp LC(Z)      &kp LC(X)          &kp LC(C)       &kp LC(V)        &none      &trans           &none         &kp RA(N)            &kp PLUS                 &kp LBRC      &kp RBRC     &kp PIPE  &kp TILDE
-                                          &trans          &trans           &kp SPACE                                 &kp RET              &trans                   &trans
+&trans  &kp F1         &kp F2          &kp F3          &kp F4           &kp F5                &none         &kp F6  &kp F7  &kp F8   &kp F9   &kp F10  &kp BSPC
+&trans  &kp PAGE_UP    &kp LEFT_ARROW  &kp UP_ARROW    &kp RIGHT_ARROW  &kp PAGE_DOWN  &none  &none  &none  &kp HOME  &kp LEFT  &kp DOWN  &kp RIGHT  &kp END  &kp F11
+&trans  &bt BT_CLR_ALL &bt BT_SEL 0    &bt BT_SEL 1    &bt BT_SEL 2     &bt BT_SEL 3   &trans        &none  &bt BT_SEL 4  &bt BT_CLR  &rgb_ug RGB_TOG  &out OUT_TOG  &kp F12  &trans
+                                       &trans          &trans          &kp SPACE                             &kp RET  &trans  &trans
             >;
         };
 
-        layer_3 {
-            display-name = "Fn";
+        adjust_layer {
+            display-name = "ADJUST";
             bindings = <
-&kp F1          &kp F2         &kp F3         &kp F4         &kp F5         &kp F6                                  &mmv MOVE_UP                     &kt F7           &kp F8          &kp F9          &kp F10       &kp F11          &kp F12
-&bt BT_CLR_ALL  &bt BT_SEL 0   &bt BT_SEL 1   &bt BT_SEL 2   &bt BT_SEL 3   &bt BT_SEL 4            &mmv MOVE_LEFT  &mkp LCLK       &mmv MOVE_RIGHT  &out OUT_TOG     &mmv MOVE_LEFT  &mmv MOVE_DOWN  &mmv MOVE_UP  &mmv MOVE_RIGHT  &none
-&bt BT_CLR      &bt BT_DISC 0  &bt BT_DISC 1  &bt BT_DISC 2  &bt BT_DISC 3  &bt BT_DISC 4  &none                    &mmv MOVE_DOWN                   &rgb_ug RGB_TOG  &msc SCRL_LEFT  &msc SCRL_DOWN  &msc SCRL_UP  &msc SCRL_RIGHT  &tog 4
-                                              &trans         &trans         &trans                                                                   &mkp LCLK        &mkp RCLK       &trans
-            >;
-        };
-
-        layer_4 {
-            bindings = <
-&trans  &trans  &trans  &trans            &trans  &trans                    &trans          &trans  &trans  &trans  &trans  &trans  &trans
-&trans  &trans  &trans  &trans            &trans  &trans            &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans
-&trans  &trans  &trans  &trans            &trans  &trans  &trans            &trans          &trans  &trans  &trans  &trans  &trans  &trans
-                        &kp LEFT_COMMAND  &trans  &trans                                    &trans  &trans  &trans
-            >;
-        };
-
-        layer_5 {
-            display-name = "BOX DRAW";
-            bindings = <
-&trans  &uc 0x250C 0  &uc 0x252C 0  &uc 0x2510 0  &uc 0x2500 0  &trans                    &trans          &trans  &trans  &trans  &trans  &trans  &trans
-&trans  &uc 0x251C 0  &uc 0x253C 0  &uc 0x2524 0  &uc 0x2502 0  &trans            &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans
-&trans  &uc 0x2514 0  &uc 0x2534 0  &uc 0x2518 0  &trans        &trans  &trans            &trans          &trans  &trans  &trans  &trans  &trans  &trans
-                                    &trans        &trans        &trans                                    &trans  &trans  &trans
+&trans  &trans  &trans  &trans  &trans  &trans                    &trans  &trans  &trans  &trans  &trans  &trans  &trans
+&trans  &trans  &trans  &trans  &trans  &trans      &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans  &trans
+&trans  &trans  &trans  &trans  &trans  &trans  &trans        &trans  &trans  &trans  &trans  &trans  &trans  &trans
+                        &trans  &trans  &trans                        &trans  &trans  &trans
             >;
         };
     };
