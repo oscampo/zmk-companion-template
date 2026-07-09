@@ -2,6 +2,8 @@
 
 # ZMK Companion Template
 
+![Photo of Eyelash Peripherals Corne](https://github.com/oscampo/zmk-companion-template/resources/zmk-eyelash-corne.png)
+
 The recommended ZMK firmware starting point for
 [**zmk-companion**](https://github.com/oscampo/zmk-companion): fork this
 repo and GitHub Actions builds you a ready-to-flash firmware with the BLE
@@ -79,7 +81,6 @@ hand, see [ZMK's keymap docs](https://zmk.dev/docs/keymaps) for the syntax.
 
 **This keyboard is not the same as [foostan's Corne](https://github.com/foostan/crkbd). It will not work with standard `corne` firmware.**
 
-![Photo of Eyelash Peripherals Corne](https://ae01.alicdn.com/kf/Sa797fee25edd44248fbfdb0e13d44e00B.jpg)
 
 This repo's board definitions originate from the "睫毛外设" (Eyelash
 Peripherals) vendor's own ZMK config for this keyboard. For a 3D model of
