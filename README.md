@@ -2,7 +2,7 @@
 
 # ZMK Companion Template
 
-![Photo of Eyelash Peripherals Corne](https://github.com/oscampo/zmk-companion-template/resources/zmk-eyelash-corne.png)
+![Photo of Eyelash Peripherals Corne](resources/zmk-eyelash-corne.png)
 
 The recommended ZMK firmware starting point for
 [**zmk-companion**](https://github.com/oscampo/zmk-companion): fork this
