@@ -61,6 +61,14 @@ other than eyelash_corne, if you try it, please open an issue (here or on
 zmk-companion) with the result either way, working or not, so this note
 can stop being a guess.
 
+**Power-cycle both halves together**: turning only one half off and back
+on (central or peripheral) while the other stays powered can leave the two
+sides' internal sync mismatched, showing up as pages flashing briefly then
+going blank in no consistent order. Confirmed with `zmk-companion`'s own
+debug log showing every BLE write succeeding while this happens, so it's a
+central/peripheral sync issue on the keyboard's own firmware, not something
+the app can detect or fix. Always power both halves off and on together.
+
 ## Keymap
 
 `config/eyelash_corne.keymap` is intentionally minimal: plain QWERTY, a
