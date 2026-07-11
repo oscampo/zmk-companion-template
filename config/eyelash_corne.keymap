@@ -38,6 +38,16 @@
             >;
         };
 
+        // Example: zmk-companion's Canvas pages can be jumped to directly
+        // with F13-F21 (page 1-9, no modifier), global hotkeys registered by
+        // the app itself, see docs/user_guide.md "Jumping to a page on
+        // demand". Almost nothing else binds F13+, so they're safe to send
+        // from any spare key here without stepping on an existing shortcut.
+        // Swap a &trans below for one of these to wire up a key, e.g.:
+        //   &kp F13   -> jump to page 1
+        //   &kp F14   -> jump to page 2
+        //   ...
+        //   &kp F21   -> jump to page 9
         adjust_layer {
             display-name = "ADJUST";
             bindings = <
