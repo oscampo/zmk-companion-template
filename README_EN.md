@@ -81,12 +81,14 @@ and GitHub Actions rebuilds automatically. You can also edit the file by
 hand, see [ZMK's keymap docs](https://zmk.dev/docs/keymaps) for the syntax.
 
 **Jumping to a Canvas page on demand**: `adjust_layer` has a commented
-example showing how to bind spare keys to `F13`-`F21`, which
-`zmk-companion` picks up as global hotkeys to jump straight to page 1-9,
-see its
+example showing how to bind spare keys to `Ctrl+Alt+Shift+Win+1` through
+`+9`, which `zmk-companion` picks up as global hotkeys to jump straight to
+page 1-9, see its
 [user guide](https://github.com/oscampo/zmk-companion/blob/main/docs/user_guide.md#pages)
-for why F13+ specifically (short version: almost nothing else uses them,
-so they won't collide with a shortcut you already rely on).
+for why that specific combo (short version: four modifiers together is rare
+enough in everyday shortcuts to stay a safe choice, and it's a standard
+keycode range guaranteed to actually work, unlike the F13-F24 range this
+started with, which turned out not to reach Windows at all here).
 
 ## Keymap Diagram
 
