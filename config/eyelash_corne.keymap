@@ -39,15 +39,19 @@
         };
 
         // Example: zmk-companion's Canvas pages can be jumped to directly
-        // with F13-F21 (page 1-9, no modifier), global hotkeys registered by
-        // the app itself, see docs/user_guide.md "Jumping to a page on
-        // demand". Almost nothing else binds F13+, so they're safe to send
-        // from any spare key here without stepping on an existing shortcut.
+        // with Ctrl+Alt+Shift+Win+1-9 (page 1-9), a global hotkey registered
+        // by the app itself, see docs/user_guide.md "Jumping to a page on
+        // demand". An earlier version of this used bare F13-F21 instead,
+        // reverted after confirming on real hardware that those never reach
+        // Windows at all here (a ZMK/Zephyr HID report descriptor limit, not
+        // fixable from the keymap). Four modifiers together is rare enough
+        // in everyday shortcuts to stay a safe, low-collision choice, and
+        // it's a standard keycode range that's guaranteed to actually work.
         // Swap a &trans below for one of these to wire up a key, e.g.:
-        //   &kp F13   -> jump to page 1
-        //   &kp F14   -> jump to page 2
+        //   &kp LC(LA(LS(LG(N1))))   -> jump to page 1
+        //   &kp LC(LA(LS(LG(N2))))   -> jump to page 2
         //   ...
-        //   &kp F21   -> jump to page 9
+        //   &kp LC(LA(LS(LG(N9))))   -> jump to page 9
         adjust_layer {
             display-name = "ADJUST";
             bindings = <
