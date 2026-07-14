@@ -1,10 +1,30 @@
-# zmk-new_corne
+# zmk-companion-template
 
 ZMK firmware for eyelash_corne split keyboard (left=central, right=peripheral).
 
 ## Git
 
-Always commit and push directly to `main`. Do not create feature branches.
+Work on a feature branch and open a PR against `main`, don't commit directly
+to `main`.
+
+## BLE display feature
+
+The display feature's logic (`custom_status_screen.c`, `mono_16.c`,
+`mono_8.c`, `mono_icon.c`) does NOT live under `config/` anymore. It's an
+external west module, [`oscampo/zmk-companion`](https://github.com/oscampo/zmk-companion)
+(`firmware/`), pulled in via the `zmk-companion` project entry in
+`config/west.yml`. That module's own `zephyr/module.yml` (at its repo root)
+points Zephyr at `firmware/CMakeLists.txt` and `firmware/Kconfig`.
+
+The Kconfig flag that enables it is `CONFIG_ZMK_COMPANION_DISPLAY` (renamed
+from the older, unnamespaced `CONFIG_KBD_BLE_DISPLAY`; forks that predate
+the rename need to update their `.conf`/`build.yaml`, the old name is now a
+silent no-op, not a build error). `build.yaml` here already sets it for
+`eyelash_corne_left`.
+
+If you're asked to change the display's actual behavior (not the keymap),
+the source you want is in `oscampo/zmk-companion`'s `firmware/` directory,
+not here.
 
 
 Nunca incluyas " — " en tus respuestas. Reemplázala siempre por ","

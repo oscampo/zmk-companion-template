@@ -3,6 +3,8 @@
 
 # ZMK Companion Template
 
+![Photo of Eyelash Peripherals Corne](resources/zmk-eyelash-corne.png)
+
 The recommended ZMK firmware starting point for
 [**zmk-companion**](https://github.com/oscampo/zmk-companion): fork this
 repo and GitHub Actions builds you a ready-to-flash firmware with the BLE
@@ -26,9 +28,14 @@ this specific hardware, that part just hasn't been tried elsewhere yet.
    flash each half.
 4. Customize your keymap whenever you want, see [Keymap](#keymap) below.
 
-**Already have your own ZMK config repo?** [Add this one as a module instead of forking it](https://zmk.dev/docs/features/modules#building-with-modules),
-see "Other boards" below for why that's usually enough to get the display
-feature without copying any files.
+**Already have your own ZMK config repo?** Two separate things you might
+want, and neither needs a fork:
+
+- **The `eyelash_corne` board itself**: [add this repo as a module](https://zmk.dev/docs/features/modules#building-with-modules)
+  in your own `west.yml` to pull in `boards/arm/eyelash_corne`.
+- **The BLE display feature**: it's not part of this repo anymore, see
+  "BLE Keyboard Display" → "Other boards" below for adding
+  `oscampo/zmk-companion` directly.
 
 **Note for forks**: [`config/west.yml`](config/west.yml) already pulls
 `boards/arm/eyelash_corne` from its upstream URL. If your fork still has a
@@ -39,26 +46,39 @@ actually used.
 ## BLE Keyboard Display
 
 The actual feature this template exists for: a BLE GATT service
-(`config/custom_status_screen.c`) that renders live data (clock, weather,
-custom text, whole page layouts) on the keyboard's `nice_view` display, fed
-by the zmk-companion Windows app. See its
+(`custom_status_screen.c`) that renders live data (clock, weather, custom
+text, whole page layouts) on the keyboard's `nice_view` display, fed by the
+zmk-companion Windows app. See its
 [user guide](https://github.com/oscampo/zmk-companion/blob/main/docs/user_guide.md)
 for what it can do.
 
-Forking this repo already gets it: `build.yaml` enables it
-(`CONFIG_KBD_BLE_DISPLAY=y`) for the `eyelash_corne_left` build (the split's
-central half), so the `.uf2` GitHub Actions produces for that board already
-has it, nothing extra to build.
+The feature itself isn't embedded in this repo's `config/` anymore, it lives
+in its own west module,
+[`oscampo/zmk-companion`](https://github.com/oscampo/zmk-companion)
+(`firmware/`), pulled in via `config/west.yml` and enabled by
+`CONFIG_ZMK_COMPANION_DISPLAY=y` (`build.yaml` already sets this for the
+`eyelash_corne_left` build, the split's central half). Forking this repo
+already gets both, nothing extra to wire up.
+
+**Upgrading an existing fork**: this flag used to be named
+`KBD_BLE_DISPLAY` and the source lived directly under `config/`. If your
+fork predates this change and still sets `CONFIG_KBD_BLE_DISPLAY=y`
+anywhere (a board `.conf`, `build.yaml`), that line is now a no-op, the
+build will succeed but silently ship without the display. Update it to
+`CONFIG_ZMK_COMPANION_DISPLAY=y` and merge in the `config/west.yml` module
+entry described below.
 
 **Other boards**: the display code has no eyelash_corne-specific
 dependencies, it only needs the standard `nice_view` shield and a split ZMK
-board (it runs on the central half only). Since this repo is already usable
-as a west module, you likely don't need to fork it or copy any files: add
-it as a module in your own config's `west.yml` and build your own board
-with `-DCONFIG_KBD_BLE_DISPLAY=y`. This hasn't been verified on a board
-other than eyelash_corne, if you try it, please open an issue (here or on
-zmk-companion) with the result either way, working or not, so this note
-can stop being a guess.
+board (it runs on the central half only). You don't need to fork this repo
+or copy any files: add `oscampo/zmk-companion` as a module in your own
+config's `west.yml` and build your own board with
+`-DCONFIG_ZMK_COMPANION_DISPLAY=y`, see
+[`zmk-companion`'s getting-started guide](https://github.com/oscampo/zmk-companion/blob/main/docs/getting_started.md#1-firmware-one-time)
+for the exact manifest snippet. This hasn't been verified on a board other
+than eyelash_corne, if you try it, please open an issue (here or on
+zmk-companion) with the result either way, working or not, so this note can
+stop being a guess.
 
 **Power-cycle both halves together**: turning only one half off and back
 on (central or peripheral) while the other stays powered can leave the two
@@ -87,7 +107,7 @@ page 1-9, see its
 [user guide](https://github.com/oscampo/zmk-companion/blob/main/docs/user_guide.md#pages)
 for why that specific combo (short version: four modifiers together is rare
 enough in everyday shortcuts to stay a safe choice, and it's a standard
-keycode range guaranteed to actually work, unlike the F13-F24 range this
+keycode range guaranteed to actually work, unlike the F13-F21 range this
 started with, which turned out not to reach Windows at all here).
 
 ## Keymap Diagram
@@ -97,8 +117,6 @@ started with, which turned out not to reach Windows at all here).
 ## Hardware
 
 **This keyboard is not the same as [foostan's Corne](https://github.com/foostan/crkbd). It will not work with standard `corne` firmware.**
-
-![Photo of Eyelash Peripherals Corne](https://ae01.alicdn.com/kf/Sa797fee25edd44248fbfdb0e13d44e00B.jpg)
 
 This repo's board definitions originate from the "睫毛外设" (Eyelash
 Peripherals) vendor's own ZMK config for this keyboard. For a 3D model of
