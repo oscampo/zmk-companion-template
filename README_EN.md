@@ -3,6 +3,8 @@
 
 # ZMK Companion Template
 
+![Photo of Eyelash Peripherals Corne](resources/zmk-eyelash-corne.png)
+
 The recommended ZMK firmware starting point for
 [**zmk-companion**](https://github.com/oscampo/zmk-companion): fork this
 repo and GitHub Actions builds you a ready-to-flash firmware with the BLE
@@ -26,9 +28,14 @@ this specific hardware, that part just hasn't been tried elsewhere yet.
    flash each half.
 4. Customize your keymap whenever you want, see [Keymap](#keymap) below.
 
-**Already have your own ZMK config repo?** [Add this one as a module instead of forking it](https://zmk.dev/docs/features/modules#building-with-modules),
-see "Other boards" below for why that's usually enough to get the display
-feature without copying any files.
+**Already have your own ZMK config repo?** Two separate things you might
+want, and neither needs a fork:
+
+- **The `eyelash_corne` board itself**: [add this repo as a module](https://zmk.dev/docs/features/modules#building-with-modules)
+  in your own `west.yml` to pull in `boards/arm/eyelash_corne`.
+- **The BLE display feature**: it's not part of this repo anymore, see
+  "BLE Keyboard Display" → "Other boards" below for adding
+  `oscampo/zmk-companion` directly.
 
 **Note for forks**: [`config/west.yml`](config/west.yml) already pulls
 `boards/arm/eyelash_corne` from its upstream URL. If your fork still has a
@@ -100,7 +107,7 @@ page 1-9, see its
 [user guide](https://github.com/oscampo/zmk-companion/blob/main/docs/user_guide.md#pages)
 for why that specific combo (short version: four modifiers together is rare
 enough in everyday shortcuts to stay a safe choice, and it's a standard
-keycode range guaranteed to actually work, unlike the F13-F24 range this
+keycode range guaranteed to actually work, unlike the F13-F21 range this
 started with, which turned out not to reach Windows at all here).
 
 ## Keymap Diagram
@@ -110,8 +117,6 @@ started with, which turned out not to reach Windows at all here).
 ## Hardware
 
 **This keyboard is not the same as [foostan's Corne](https://github.com/foostan/crkbd). It will not work with standard `corne` firmware.**
-
-![Photo of Eyelash Peripherals Corne](https://ae01.alicdn.com/kf/Sa797fee25edd44248fbfdb0e13d44e00B.jpg)
 
 This repo's board definitions originate from the "睫毛外设" (Eyelash
 Peripherals) vendor's own ZMK config for this keyboard. For a 3D model of

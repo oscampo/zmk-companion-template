@@ -1,10 +1,11 @@
-# zmk-new_corne
+# zmk-companion-template
 
 ZMK firmware for eyelash_corne split keyboard (left=central, right=peripheral).
 
 ## Git
 
-Always commit and push directly to `main`. Do not create feature branches.
+Work on a feature branch and open a PR against `main`, don't commit directly
+to `main`.
 
 ## BLE display feature
 
